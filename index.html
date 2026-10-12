@@ -16,6 +16,11 @@
     try{localStorage.removeItem('qq2012_pass');}catch(e){}
     location.reload();
   };
+  if(location.hash === '#qa-restart'){
+    history.replaceState(null,'',location.pathname+location.search);
+    window.argRestartGame();
+    return;
+  }
   if(location.hash === '#reset'){
     try{localStorage.removeItem('eclipse_save_v1');}catch(e){}
     wipe(localStorage); wipe(sessionStorage);
@@ -2929,7 +2934,7 @@ function openWindow(appId){
  win.addEventListener('mousedown',()=>focusWindow(appId));
  if(appId==='browser') initBrowserWindow(win);
  if(appId==='qzone'){ initQzoneWindow(win); }
- if(appId==='map'){ win.querySelectorAll('.map-app-frame').forEach(function(f){ if(window.argRuntime) f.src=argRuntime.map; }); }
+ if(appId==='map'){ win.querySelectorAll('.map-app-frame').forEach(function(f){ var source=document.querySelector('#arg-map iframe'); if(source) f.src=source.getAttribute('src'); }); }
  if(appId==='tieba'||appId==='qzone'||appId==='browser'||appId==='map'){
     toggleMaximizeWindow(appId);
   }
