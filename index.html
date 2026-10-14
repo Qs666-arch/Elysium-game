@@ -8267,10 +8267,12 @@ html,body { overflow:clip; }
     new MutationObserver(renderClock).observe(clock,{childList:true});
     new MutationObserver(renderClock).observe(date,{childList:true});
     window.addEventListener('message',event=>{
-      if(!rescueReady || window.argRestoringSave || !state || state.ending || !event.data || event.data.argRescue!=='school-profile-confirmed')return;
+      if(!rescueReady || window.argRestoringSave || (state && state.ending) || !event.data || event.data.argRescue!=='school-profile-confirmed')return;
       const frame=Array.from(document.querySelectorAll('[data-br-id="pgJiaowu"] iframe')).find(frame=>event.source===frame.contentWindow);
       if(!frame)return;
       const sent=event.data.submittedAt;
+      if(!Number.isFinite(sent) || sent>Date.now())return;
+      if(!state){state={deadline:sent,ending:0};finish(3);return;}
       if(!Number.isFinite(sent) || sent<state.deadline-DURATION || sent>Date.now())return;
       if(Date.now()>=state.deadline || sent>=state.deadline){finish(2);return;}
       finish(3);
