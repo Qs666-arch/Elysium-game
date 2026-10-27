@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<script src="scripts/persistence-bootstrap.js"></script>
-<script>var argRuntime={qzone:'embedded/qzone.html',news:'embedded/news.html',map:'embedded/map.html'};</script>
-<script src="scripts/frame-loader.js"></script>
+<script src="scripts/compatibility-bootstrap.js?v=20261028-qzone1"></script>
+<script src="scripts/persistence-bootstrap.js?v=20261028-qzone1"></script>
+<script>var argRuntime={qzone:'embedded/qzone-20261028.html',news:'embedded/news.html',map:'embedded/map.html'};</script>
+<script src="scripts/frame-loader.js?v=20261028-qzone1"></script>
 <script src="scripts/countdown-audio.js"></script>
 
 <meta charset="UTF-8">
@@ -395,7 +396,7 @@ body{width:100vw;height:100vh;overflow:hidden;font-family:'Microsoft YaHei','Pin
 
 .mp-content{flex:1;min-width:0;overflow:hidden;position:relative;
   background:linear-gradient(180deg,var(--panel-hi),var(--panel-lo));}
-.mp-panel{position:absolute;inset:0;display:none;overflow-y:auto;overflow-x:hidden;}
+.mp-panel{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;display:none;overflow-y:auto;overflow-x:hidden;}
 .mp-panel.active{display:block;}
 .mp-panel::-webkit-scrollbar{width:8px;}
 .mp-panel::-webkit-scrollbar-track{background:transparent;}
@@ -657,7 +658,7 @@ html, body {
 /* ---------- Screen System ---------- */
 .screen {
   position: fixed;
-  inset: 0;
+  top:0;right:0;bottom:0;left:0;inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3810,7 +3811,7 @@ function getWindowConfig(appId){
 </div>`},
 		 map:{title:'缺德地图 - 导航系统',icon:'🗺️',w:940,h:680,x:Math.min(b+20,280),y:Math.min(60,100),content:'<iframe class="map-app-frame" src="about:blank" style="width:100%;height:100%;border:none;display:block;background:#fff;"></iframe>'},
 		 qzone:{title:'陈、陌的QQ空间 - Internet Explorer',icon:'⭐',w:940,h:680,x:Math.min(b+20,280),y:Math.min(60,100),content:`<style>
- .qz-frame{position:absolute;inset:0;width:100%;height:100%;border:none;background:#fff;display:block;}
+ .qz-frame{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;width:100%;height:100%;border:none;background:#fff;display:block;}
  </style>
  <iframe class="qz-frame" id="qzFrame"></iframe>`}
 	 };
@@ -4093,8 +4094,7 @@ function getWindowConfig(appId){
 function initQzoneWindow(win){
   var f=win.querySelector('#qzFrame');if(!f)return;
   return window.argFrameLoader.ensure(f,argRuntime.qzone,{
-    marker:'qzLoaded',retryFailed:true,
-    errorHtml:'<p style="font:14px Microsoft YaHei;padding:20px">QQ空间文件未能加载。</p>',
+    mode:'direct',marker:'qzLoaded',retryFailed:true,
     onReady:function(frame){if(frame.dataset.argSpaceTarget)frame.contentWindow.postMessage({argSearchSpace:frame.dataset.argSpaceTarget},'*');}
   });
 }/* QQ空间窗口 —— 加载逻辑 */
@@ -9273,6 +9273,6 @@ html,body { overflow:clip; }
 #arg-save-controls{position:fixed;left:12px;bottom:54px;z-index:1000002;display:flex;gap:8px;align-items:center;padding:3px 6px;border:0;border-radius:3px;background:rgba(24,21,19,.3);color:#c8bdaf;opacity:.55;pointer-events:none;font:10px "Microsoft YaHei",sans-serif;}
 #arg-save-controls[hidden]{display:none;}
 #arg-save-controls button{padding:5px 9px;border:1px solid #b3a390;background:#342d26;color:#f4e6d1;border-radius:3px;cursor:pointer;}
-</style><script src="scripts/persistence-session.js"></script>
+</style><script src="scripts/persistence-session.js?v=20261028-qzone1"></script>
 </body>
 </html>
