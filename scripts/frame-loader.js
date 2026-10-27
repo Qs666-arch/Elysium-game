@@ -1,16 +1,18 @@
-/* Local iframe lifecycle only. Authored page files are never rewritten. */
+/* Managed iframe lifecycles. QQ Space navigates directly; legacy pages retain their own source isolation. */
 (function () {
   'use strict';
   var records = new Map(), documents = new Map(), serial = 0, observer = null;
   var api = { timeoutMs: 30000 };
   function token() {
-    return 'frame-' + (++serial) + '-' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+    var unique;
+    try { if (window.crypto && typeof crypto.randomUUID === 'function') unique = crypto.randomUUID(); } catch (_) {}
+    return 'frame-' + (++serial) + '-' + (unique || Math.random().toString(36).slice(2));
   }
   function styles() {
     if (document.getElementById('arg-frame-loader-style')) return;
     var style = document.createElement('style'); style.id = 'arg-frame-loader-style';
     style.textContent = '.arg-frame-host{position:relative;width:100%;height:100%;min-height:120px}' +
-      '.arg-frame-panel{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;box-sizing:border-box;background:#fafafa;color:#444;font:14px/1.7 Microsoft YaHei,Arial,sans-serif;text-align:center}' +
+      '.arg-frame-panel{position:absolute;top:0;right:0;bottom:0;left:0;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;box-sizing:border-box;background:#fafafa;color:#444;font:14px/1.7 Microsoft YaHei,Arial,sans-serif;text-align:center}' +
       '.arg-frame-panel[hidden]{display:none}.arg-frame-panel button{padding:7px 20px;border:1px solid #9daebd;border-radius:3px;background:#fff;color:#304d67;font:inherit;cursor:pointer}.arg-frame-panel button:focus-visible{outline:2px solid #3175b8;outline-offset:3px}';
     document.head.appendChild(style);
   }
@@ -69,6 +71,10 @@
   }
   function clearAttempt(record) {
     clearTimeout(record.timer); record.timer = null;
+    clearTimeout(record.diagnosticTimer); record.diagnosticTimer = null;
+    clearTimeout(record.probeTimer); record.probeTimer = null;
+    if (record.probeAbort) { record.probeAbort.abort(); record.probeAbort = null; }
+    record.probing = false;
     if (record.abort) { record.abort.abort(); record.abort = null; }
     if (record.blob) { URL.revokeObjectURL(record.blob); record.blob = null; }
     record.originalHtml = null;
@@ -81,6 +87,7 @@
   }
   function fail(record, attempt, reason) {
     if (!current(record, attempt) || record.status !== 'loading') return;
+    if (record.options.mode === 'direct') { failDirect(record, attempt, reason); return; }
     record.status = 'error'; record.error = String(reason || 'load error');
     clearAttempt(record); marker(record, false);
     record.frame.dataset.argFrameState = 'error'; record.frame.src = 'about:blank';
@@ -89,6 +96,7 @@
     else record.ui.message.textContent = reason === 'timeout' ? '页面加载超时，请重试。' : '页面加载失败，请重试。';
   }
   async function start(record) {
+    if (record.options.mode === 'direct') { startDirect(record); return; }
     clearAttempt(record);
     record.attempt = token(); var attempt = record.attempt;
     record.status = 'loading'; record.error = null; marker(record, false);
@@ -118,11 +126,105 @@
       if (error.name !== 'AbortError') fail(record, attempt, error.message);
     }
   }
+  function waitingText(record) {
+    if (navigator.onLine === false) return '当前网络已断开，正在尝试读取本地缓存。联网后可以重试。';
+    if (record.diagnostic === 'http-404') return '未找到QQ空间页面，请确认发布包中的 embedded 文件夹已完整上传。';
+    if (record.diagnostic && record.diagnostic.indexOf('http-') === 0) return '服务器暂时未能提供QQ空间页面，请稍后重试。';
+    if (record.diagnostic === 'network') return 'QQ空间的连接尚未完成。请检查网络，或继续等待后重试。';
+    return 'QQ空间加载时间较长，页面仍在继续加载。可以继续等待，也可以重试。';
+  }
+  function showWaiting(record) {
+    record.ui.box.hidden = false; record.ui.message.textContent = waitingText(record);
+    record.ui.button.hidden = false; record.ui.wait.hidden = false;
+  }
+  function armDirectTimer(record) {
+    clearTimeout(record.timer);
+    var attempt = record.attempt;
+    record.timer = setTimeout(function () {
+      record.timer = null;
+      if (!current(record, attempt) || record.status !== 'loading') return;
+      record.slow = true; showWaiting(record); diagnoseDirect(record, attempt);
+    }, record.options.timeoutMs || api.timeoutMs);
+  }
+  function diagnoseDirect(record, attempt) {
+    // Diagnostics never gate navigation, require fetch support, or cancel a slow page.
+    if (!current(record, attempt) || record.status !== 'loading' || record.documentId || record.probing || typeof fetch !== 'function' || typeof AbortController !== 'function') return;
+    var url;
+    try { url = new URL(record.source, document.baseURI); } catch (_) { return; }
+    if (!/^https?:$/.test(url.protocol)) return;
+    var controller;
+    try { controller = new AbortController(); } catch (_) { return; }
+    record.probing = true;
+    record.probeAbort = controller;
+    var options = { method: 'HEAD', credentials: 'same-origin', cache: 'default' };
+    options.signal = controller.signal;
+    record.probeTimer = setTimeout(function () { controller.abort(); }, 8000);
+    function finish(kind) {
+      if (!current(record, attempt) || record.status !== 'loading') return;
+      clearTimeout(record.probeTimer); record.probeTimer = null; record.probeAbort = null; record.probing = false;
+      if (record.documentId) return;
+      if (kind) { record.diagnostic = kind; record.slow = true; showWaiting(record); }
+    }
+    try {
+      fetch(url.href, options).then(function (response) {
+        // HEAD is optional on a static host; unsupported diagnostics are not page failures.
+        finish(!response.ok && response.status !== 405 && response.status !== 501 ? 'http-' + response.status : null);
+      }, function (error) { finish(error && error.name === 'AbortError' ? null : 'network'); });
+    } catch (_) { finish('network'); }
+  }
+  function failDirect(record, attempt, reason) {
+    if (!current(record, attempt) || record.status !== 'loading') return;
+    record.status = 'error'; record.error = String(reason || 'initialization error');
+    clearAttempt(record); marker(record, false); record.frame.dataset.argFrameState = 'error';
+    record.ui.box.hidden = false; record.ui.button.hidden = false; record.ui.wait.hidden = true;
+    if (reason === 'frame-policy') record.ui.message.textContent = '当前网站的安全设置阻止了QQ空间内嵌页面。请从游戏的独立网址打开后重试。';
+    else if (reason === 'bridge-missing') record.ui.message.textContent = 'QQ空间的启动脚本未能加载或执行。请检查发布包是否完整，或重试。';
+    else if (reason === 'iframe navigation error') record.ui.message.textContent = navigator.onLine === false ? '网络已断开，QQ空间未能打开。联网后请重试。' : 'QQ空间页面未能打开，请检查网络后重试。';
+    else record.ui.message.textContent = 'QQ空间初始化未完成，请重试。';
+  }
+  function missingDeclaredQzoneBridge(frame) {
+    try {
+      var child = frame.contentWindow, doc = child.document;
+      if (!doc || doc.readyState !== 'complete' || child.location.href === 'about:blank' || child.argQzoneChild) return false;
+      var scripts = doc.getElementsByTagName('script');
+      for (var i = 0; i < scripts.length; i++) {
+        if (/(^|\/)qzone-child\.js(?:[?#]|$)/i.test(scripts[i].getAttribute('src') || '')) return true;
+      }
+    } catch (_) { /* An opaque sandbox cannot be inspected; retain the message/timeout path. */ }
+    return false;
+  }
+  function replaceDirectFrame(record) {
+    var previous = record.frame, next = previous.cloneNode(false);
+    // A new browsing context, not a second navigation of the old context, isolates late messages.
+    next.removeAttribute('src'); next.removeAttribute('srcdoc');
+    previous.removeEventListener('error', record.nativeError);
+    previous.removeEventListener('load', record.nativeLoad);
+    records.delete(previous); previous.dataset.argFrameState = 'disposed';
+    if (record.options.marker) previous.dataset[record.options.marker] = '';
+    record.frame = next; records.set(next, record);
+    next.addEventListener('error', record.nativeError); next.addEventListener('load', record.nativeLoad);
+    previous.parentNode.replaceChild(next, previous);
+  }
+  function startDirect(record) {
+    clearAttempt(record);
+    if (record.attempt !== null) replaceDirectFrame(record);
+    record.attempt = token(); record.documentId = null; record.status = 'loading'; record.error = null;
+    record.slow = false; record.diagnostic = null; marker(record, false);
+    record.frame.dataset.argFrameState = 'loading'; record.frame.dataset.argFrameAttempt = record.attempt;
+    record.ui.box.hidden = false; record.ui.message.textContent = 'QQ空间加载中…';
+    record.ui.button.hidden = true; record.ui.wait.hidden = true;
+    if (navigator.onLine === false) showWaiting(record);
+    armDirectTimer(record);
+    // Keep the source URL stable so that HTML and image responses can use the browser cache.
+    // Do not navigate to about:blank before this assignment (WebKit navigation race).
+    try { record.frame.src = record.source; }
+    catch (error) { failDirect(record, record.attempt, error.message); }
+  }
   function ensure(frame, source, options) {
     if (!frame || !source) return null;
     options = options || {};
     var record = records.get(frame);
-    if (record && record.source === source) {
+    if (record && record.source === source && record.options.mode === options.mode) {
       if (record.status === 'error' && options.retryFailed) start(record);
       return record;
     }
@@ -133,15 +235,35 @@
       frame.parentElement.insertBefore(host, frame); host.appendChild(frame);
     }
     record = { frame: frame, source: source, options: options, status: 'idle', attempt: null, timer: null, abort: null, blob: null, error: null };
-    record.ui = panel(host, function () { if (record.status === 'error') start(record); });
+    record.ui = panel(host, function () { if (record.status === 'error' || record.options.mode === 'direct' && record.status === 'loading') start(record); });
     record.nativeError = function () { fail(record, record.attempt, 'iframe navigation error'); };
     frame.addEventListener('error', record.nativeError);
+    if (options.mode === 'direct') {
+      var wait = document.createElement('button'); wait.type = 'button'; wait.textContent = '继续等待'; wait.hidden = true;
+      wait.addEventListener('click', function () {
+        if (record.status !== 'loading') return;
+        record.slow = false; record.diagnostic = null;
+        record.ui.message.textContent = navigator.onLine === false ? '网络仍未连接，正在等待页面恢复。' : '正在继续等待QQ空间加载…';
+        record.ui.wait.hidden = true; armDirectTimer(record);
+      });
+      record.ui.box.appendChild(wait); record.ui.wait = wait;
+      record.nativeLoad = function () {
+        if (record.status !== 'loading' || record.documentId) return;
+        if (missingDeclaredQzoneBridge(record.frame)) { failDirect(record, record.attempt, 'bridge-missing'); return; }
+        // Ignore the iframe's initial empty document. A real error page can be diagnosed early.
+        try { if (record.frame.contentWindow.location.href === 'about:blank') return; } catch (_) {}
+        clearTimeout(record.diagnosticTimer);
+        var attempt = record.attempt;
+        record.diagnosticTimer = setTimeout(function () { record.diagnosticTimer = null; diagnoseDirect(record, attempt); }, 350);
+      };
+      frame.addEventListener('load', record.nativeLoad);
+    }
     records.set(frame, record); start(record);
     return record;
   }
   function retry(frame) {
     var record = records.get(frame);
-    if (!record || record.status !== 'error') return false;
+    if (!record || record.status !== 'error' && !(record.options.mode === 'direct' && record.status === 'loading')) return false;
     start(record); return true;
   }
   function dispose(frame) {
@@ -149,13 +271,35 @@
     records.delete(frame); record.status = 'disposed'; record.attempt = null;
     clearAttempt(record); marker(record, false); frame.dataset.argFrameState = 'disposed';
     frame.removeEventListener('error', record.nativeError); record.ui.box.remove();
+    if (record.nativeLoad) frame.removeEventListener('load', record.nativeLoad);
     frame.src = 'about:blank';
   }
   function disposeWithin(parent) { parent.querySelectorAll('iframe').forEach(dispose); }
   window.addEventListener('message', function (event) {
     var data = event.data;
+    if (data && ['hello', 'ready', 'error'].includes(data.argQzone) && typeof data.documentId === 'string' && data.documentId) {
+      records.forEach(function (record) {
+        if (record.options.mode !== 'direct' || record.status !== 'loading' || event.source !== record.frame.contentWindow || !current(record, record.attempt)) return;
+        if (data.argQzone === 'hello') {
+          if (record.documentId && record.documentId !== data.documentId) return;
+          record.documentId = data.documentId;
+          record.frame.contentWindow.postMessage({ argQzone: 'init', attempt: record.attempt, documentId: record.documentId, target: record.frame.dataset.argSpaceTarget || '' }, event.origin && event.origin !== 'null' ? event.origin : '*');
+          return;
+        }
+        if (data.documentId !== record.documentId || data.attempt !== record.attempt) return;
+        if (data.argQzone === 'error') { failDirect(record, record.attempt, data.detail); return; }
+        clearAttempt(record); record.status = 'ready'; record.slow = false; record.diagnostic = null;
+        record.frame.dataset.argFrameState = 'ready'; marker(record, true); record.ui.box.hidden = true;
+        if (record.options.onReady) {
+          try { record.options.onReady(record.frame); }
+          catch (error) { record.status = 'loading'; failDirect(record, record.attempt, error.message); }
+        }
+      });
+      return;
+    }
     if (!data || !['ready', 'error'].includes(data.argFrameLifecycle) || typeof data.attempt !== 'string') return;
     records.forEach(function (record) {
+      if (record.options.mode === 'direct') return;
       if (record.status !== 'loading' || event.source !== record.frame.contentWindow || !current(record, data.attempt)) return;
       if (data.argFrameLifecycle === 'error') { fail(record, data.attempt, data.detail); return; }
       clearTimeout(record.timer); record.timer = null; record.abort = null;
@@ -172,6 +316,23 @@
         documents.set(record.source, record.originalHtml);
       }
       record.originalHtml = null;
+    });
+  });
+  window.addEventListener('offline', function () {
+    records.forEach(function (record) { if (record.options.mode === 'direct' && record.status === 'loading') showWaiting(record); });
+  });
+  window.addEventListener('online', function () {
+    records.forEach(function (record) {
+      if (record.options.mode !== 'direct' || record.status !== 'loading') return;
+      record.ui.message.textContent = '网络已恢复，正在等待QQ空间加载。若仍未打开，可以重试。';
+      record.ui.button.hidden = false; record.ui.wait.hidden = false;
+    });
+  });
+  document.addEventListener('securitypolicyviolation', function (event) {
+    if (!/^(frame-src|child-src)$/.test(event.effectiveDirective || event.violatedDirective || '')) return;
+    records.forEach(function (record) {
+      if (record.options.mode !== 'direct' || record.status !== 'loading') return;
+      try { if (event.blockedURI === new URL(record.source, document.baseURI).href) failDirect(record, record.attempt, 'frame-policy'); } catch (_) {}
     });
   });
   function installObserver() {
@@ -212,7 +373,10 @@
   api.ensure = ensure; api.retry = retry; api.dispose = dispose; api.disposeWithin = disposeWithin; api.windowFailed = windowFailed;
   api.inspect = function (frame) {
     var record = records.get(frame);
-    return record ? { status: record.status, attempt: record.attempt, hasTimer: record.timer !== null, hasBlob: !!record.blob, error: record.error } : null;
+    if (!record) return null;
+    var info = { status: record.status, attempt: record.attempt, hasTimer: record.timer !== null, hasBlob: !!record.blob, error: record.error };
+    if (record.options.mode === 'direct') { info.mode = 'direct'; info.slow = !!record.slow; info.documentId = record.documentId; info.diagnostic = record.diagnostic; }
+    return info;
   };
   api.count = function () { return records.size; };
   window.argFrameLoader = api;

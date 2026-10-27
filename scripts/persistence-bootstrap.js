@@ -1,6 +1,7 @@
 /* Persistence is initialized before any game module reads its checkpoint. */
 (function () {
   'use strict';
+  if(window.argCompatibilityBlocked)return;
   const PREFIX = 'elysium-game:';
   const KEY = PREFIX + 'save:v2', BACKUP = PREFIX + 'save:backup:v2';
   const GENERATION = PREFIX + 'generation', MIGRATED = PREFIX + 'migrated:v2';
@@ -90,19 +91,44 @@
   function clearSession(keepPassword) {
     Object.keys(session).filter(k=>names.test(k)&&(!keepPassword||k!=='qq2012_pass')).forEach(k=>session.removeItem(k));
   }
-  function reset(keepPassword) {
-    if(window.argStopSaving)window.argStopSaving();
-    local.setItem(GENERATION,crypto.randomUUID());
-    local.setItem(MIGRATED,'1');local.removeItem(KEY);local.removeItem(BACKUP);local.removeItem(LEGACY);
-    clearSession(keepPassword);
-    // Keep the original reset/password distinction, and clear only known legacy game keys.
-    Object.keys(local).filter(k=>names.test(k)&&(!keepPassword||k!=='qq2012_pass')).forEach(k=>local.removeItem(k));
+  let generationSerial=0;
+  function newGeneration() {
+    // This is a save-generation identity, not a security token. HTTP and older
+    // engines may omit randomUUID; do not stop a running game to discover that.
+    try { if(window.crypto&&typeof window.crypto.randomUUID==='function')return window.crypto.randomUUID(); } catch(_) {}
+    try {
+      if(window.crypto&&typeof window.crypto.getRandomValues==='function'){
+        const bytes=new Uint32Array(4);window.crypto.getRandomValues(bytes);
+        return 'generation-'+Array.from(bytes,x=>x.toString(36)).join('-');
+      }
+    } catch(_) {}
+    return 'generation-'+Date.now().toString(36)+'-'+(++generationSerial)+'-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2);
   }
-  window.argRestartGame=function(){reset(false);location.reload();};
-  window.argDiscardSave=function(){reset(false);};
+  function reset(keepPassword) {
+    const generation=newGeneration();
+    const sessionKeys=Object.keys(session).filter(k=>names.test(k)&&(!keepPassword||k!=='qq2012_pass'));
+    const localKeys=Object.keys(local).filter(k=>names.test(k)&&(!keepPassword||k!=='qq2012_pass'));
+    if(window.argStopSaving)window.argStopSaving();
+    local.setItem(GENERATION,generation);
+    local.setItem(MIGRATED,'1');local.removeItem(KEY);local.removeItem(BACKUP);local.removeItem(LEGACY);
+    sessionKeys.forEach(k=>session.removeItem(k));
+    // Keep the original reset/password distinction, and clear only known legacy game keys.
+    localKeys.forEach(k=>local.removeItem(k));
+  }
+  function resetFailed(error,retry) {
+    document.querySelectorAll('.rescue-restart').forEach(button=>{button.disabled=false;});
+    if(window.argCompatibility)window.argCompatibility.showProblem('重新开始未完成','请重试；也可以重新载入页面后继续。','',[
+      {label:'重试',run:retry},{label:'重新载入',run:()=>location.reload()}
+    ]);
+    else if(window.argShowResetFailure)window.argShowResetFailure(retry);
+    console.error('Game reset failed:',error);
+    return false;
+  }
+  window.argRestartGame=function(){try{reset(false);location.reload();return true;}catch(error){return resetFailed(error,window.argRestartGame);}};
+  window.argDiscardSave=function(){try{reset(false);return true;}catch(error){return resetFailed(error,window.argRestartGame);}};
   if(location.hash==='#qa-restart'||location.hash==='#reset'){
     const keep=location.hash==='#reset';
-    history.replaceState(null,'',location.pathname+location.search);reset(keep);
+    try{reset(keep);history.replaceState(null,'',location.pathname+location.search);}catch(error){resetFailed(error,()=>location.reload());return;}
   }
   const generation=local.getItem(GENERATION)||'initial';
   function candidate() {
@@ -138,7 +164,7 @@
   // A partially restored document cannot accept actions, including keyboard shortcuts.
   for(const type of ['click','dblclick','keydown','keyup','pointerdown','mousedown']){
     document.addEventListener(type,function(e){
-      if(window.argRuntimeReady||e.target.closest?.('#arg-runtime-panel'))return;
+      if(window.argRuntimeReady||e.target.closest?.('#arg-runtime-panel,#arg-compatibility-panel'))return;
       e.preventDefault();e.stopImmediatePropagation();
     },true);
   }

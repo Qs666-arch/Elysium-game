@@ -1,6 +1,7 @@
 (function () {
   'use strict';
   document.addEventListener('DOMContentLoaded',function(){
+    if(window.argCompatibilityBlocked||!window.argPersistence)return;
     const p=window.argPersistence, local=p.local, session=p.session;
     let stopped=false,ready=false,owner=false,acquiring=false,releaseLock=null,interval=null,panel=null;
     let lockRetryTimer=null,lockRetries=0;
@@ -16,14 +17,15 @@
       return 'desktop';
     }
     function showPanel(message,retry){
-      if(!panel){panel=document.createElement('div');panel.id='arg-runtime-panel';panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','true');panel.style.cssText='position:fixed;inset:0;z-index:2147483647;background:rgba(10,15,24,.94);color:#fff;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:20px;padding:32px;text-align:center;font:16px/1.7 Microsoft YaHei,sans-serif';document.body.append(panel);}
-      panel.replaceChildren();const text=document.createElement('p');text.textContent=message;panel.append(text);
-      if(retry){const button=document.createElement('button');button.textContent='重试';button.style.cssText='padding:8px 30px;cursor:pointer';button.onclick=retry;panel.append(button);}
+      if(!panel){panel=document.createElement('div');panel.id='arg-runtime-panel';panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','true');panel.style.cssText='position:fixed;top:0;right:0;bottom:0;left:0;inset:0;z-index:2147483647;background:rgba(10,15,24,.94);color:#fff;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:20px;padding:32px;text-align:center;font:16px/1.7 Microsoft YaHei,sans-serif';document.body.append(panel);}
+      while(panel.firstChild)panel.removeChild(panel.firstChild);const text=document.createElement('p');text.textContent=message;panel.appendChild(text);
+      if(retry){const button=document.createElement('button');button.textContent='重试';button.style.cssText='padding:8px 30px;cursor:pointer';button.onclick=retry;panel.appendChild(button);}
       return panel;
     }
     function release(){owner=false;if(releaseLock){releaseLock();releaseLock=null;}}
-    function stop(){stopped=true;ready=false;window.argRuntimeReady=false;window.argRestoringSave=true;window.argCountdownAudio?.stop();clearInterval(interval);clearTimeout(lockRetryTimer);release();}
+    function stop(){stopped=true;ready=false;window.argRuntimeReady=false;window.argRestoringSave=true;try{window.argCountdownAudio?.stop();}catch(error){console.warn('Countdown audio stop failed:',error);}clearInterval(interval);clearTimeout(lockRetryTimer);release();}
     window.argStopSaving=stop;
+    window.argShowResetFailure=retry=>showPanel('重新开始未完成，请重试。',retry||(()=>location.reload()));
     function stale(){return (local.getItem(p.GENERATION)||'initial')!==p.generation;}
     function save(manual){
       if(stopped||!ready||!owner||route()==='opening')return false;
